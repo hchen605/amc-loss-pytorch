@@ -229,3 +229,122 @@ def measure_clustering_performance(model, dataloader, device):
     print(f"Homogeneity: {homogeneity:.4f}")
     print(f"Completeness: {completeness:.4f}")
     return homogeneity, completeness
+
+from captum.metrics import infidelity
+from captum.attr import Saliency
+
+def compute_infidelity(model, dataloader, device, noise_std=0.01, perturbations=10):
+    """
+    Computes infidelity using Captum for a dataset.
+
+    Args:
+        model: The model to evaluate.
+        dataloader: DataLoader containing the dataset for evaluation.
+        device: The device to run the model on.
+        noise_std: Standard deviation of the noise to add.
+        perturbations: Number of noise perturbations for each input.
+
+    Returns:
+        Average infidelity score over the dataset.
+    """
+    model.eval()
+    # Define a wrapper to extract logits
+    def forward_fn(inputs):
+        """
+        Forward function wrapper to return only logits for Captum.
+        """
+        _, logits = model(inputs)
+        return logits
+
+    saliency = Saliency(forward_fn)
+    #saliency = Saliency(model)
+
+    def perturb_func(inputs):
+        """
+        Perturbation function to add random noise to the inputs.
+        """
+        perturbations = torch.randn_like(inputs) * noise_std
+        perturbed_inputs = inputs + perturbations
+        return perturbations, perturbed_inputs
+
+    infidelity_scores = []
+
+    for inputs, labels in dataloader:
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        # Compute saliency maps using Captum
+        attributions = saliency.attribute(inputs, target=labels, abs=False)
+
+        # Compute infidelity using Captum
+        score = infidelity(
+            forward_fn,
+            perturb_func,
+            inputs,
+            attributions,
+            target=labels,
+            n_perturb_samples=perturbations,
+        )
+        #print(score)
+        infidelity_scores.append(score.mean().item())
+        #print(infidelity_scores)
+
+    # Compute average infidelity across all batches
+    average_infidelity = sum(infidelity_scores) / len(infidelity_scores)
+    print(f"Average Infidelity: {average_infidelity:.6f}")
+    return average_infidelity
+
+def compute_infidelity_sample(model, dataloader, device, sample_index, noise_std=0.01, perturbations=10):
+    """
+    Computes infidelity using Captum for a single sample in the dataset.
+
+    Args:
+        model: The model to evaluate.
+        dataloader: DataLoader containing the dataset for evaluation.
+        device: The device to run the model on.
+        sample_index: Index of the sample in the dataset to evaluate.
+        noise_std: Standard deviation of the noise to add.
+        perturbations: Number of noise perturbations for each input.
+
+    Returns:
+        Infidelity score for the single sample.
+    """
+    model.eval()
+
+    # Define a wrapper to extract logits
+    def forward_fn(inputs):
+        """
+        Forward function wrapper to return only logits for Captum.
+        """
+        _, logits = model(inputs)
+        return logits
+
+    saliency = Saliency(forward_fn)
+
+    def perturb_func(inputs):
+        """
+        Perturbation function to add random noise to the inputs.
+        """
+        perturbations = torch.randn_like(inputs) * noise_std
+        perturbed_inputs = inputs + perturbations
+        return perturbations, perturbed_inputs
+
+    # Retrieve the specific sample based on the index
+    dataset = dataloader.dataset
+    inputs, labels = dataset[sample_index]
+    inputs, labels = inputs.to(device).unsqueeze(0), torch.tensor(labels).to(device)
+
+    # Compute saliency map using Captum
+    attributions = saliency.attribute(inputs, target=labels, abs=False)
+
+    # Compute infidelity for the single sample
+    score = infidelity(
+        forward_fn,
+        perturb_func,
+        inputs,
+        attributions,
+        target=labels,
+        n_perturb_samples=perturbations,
+    )
+    infidelity_score = score.item()
+    print(f"Infidelity Score for Sample {sample_index}: {infidelity_score:.6f}")
+    return infidelity_score
