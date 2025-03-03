@@ -4,8 +4,8 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from train import train_model, AMCLossWithPairing
-from evaluate import evaluate_model, compute_infidelity
-from model import PaperModel
+from evaluate import evaluate_model
+from model import PaperModel, SimpleCNN
 import ssl
 import argparse
 
@@ -17,6 +17,9 @@ parser = argparse.ArgumentParser(description="Train a model with optional AMC-Lo
 
 parser.add_argument('--dataset', type=str, default='cifar10', choices=['cifar10', 'mnist'],
                     help='Dataset to use (default: cifar10)')
+parser.add_argument('--model_type', type=str, default='paper_model',
+                    choices=['paper_model', 'simple_model'],
+                    help='Model to train (default: paper_model)')
 parser.add_argument('--batch_size', type=int, default=128, help='Batch size for training (default: 128)')
 parser.add_argument('--num_epochs', type=int, default=100, help='Number of epochs for training without AMC-Loss (default: 300)')
 parser.add_argument('--num_epochs_amc', type=int, default=100, help='Number of epochs for training with AMC-Loss (default: 200)')
@@ -63,19 +66,22 @@ if args.dataset == 'cifar10':
 elif args.dataset == 'mnist':
     input_channels = 1
 
-model_paper = PaperModel(input_channels=input_channels)
-optimizer = torch.optim.Adam(model_paper.parameters(), lr=args.lr)
+if args.model_type == 'paper_model':
+    model = PaperModel(input_channels=input_channels)
+else:
+    model = SimpleCNN(input_channels=input_channels)
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 # Train without AMC-Loss
-# print("Training without AMC-Loss", flush=True)
-# path = args.save_path + f'paper_model_without_amc'
-# train_model(model_paper, path=path, criterion=F.cross_entropy, optimizer=optimizer, dataloader=train_loader, dataloader_val=test_loader,
-#             num_epochs=args.num_epochs, use_amc_loss=False)
+print("Training without AMC-Loss", flush=True)
+path = args.save_path + f'{args.model_type}_without_amc'
+train_model(model, path=path, criterion=F.cross_entropy, optimizer=optimizer, dataloader=train_loader, dataloader_val=test_loader,
+            num_epochs=args.num_epochs, use_amc_loss=False)
 
-# #Save the model weights
-# path = args.save_path + f'paper_model_without_amc_ep{args.num_epochs}_{args.note}.pth'
-# torch.save(model_paper.state_dict(), path)
-# print(f"Model weights saved at {path}")
+#Save the model weights
+path = args.save_path + f'{args.model_type}_without_amc_ep{args.num_epochs}_{args.note}.pth'
+torch.save(model.state_dict(), path)
+print(f"Model weights saved at {path}")
 
 # Evaluate on Test Set
 #evaluate_model(model_paper, test_loader, device)
@@ -86,17 +92,19 @@ angular_margin = args.angular
 lambda_ = args.lambda_
 criterion_amc = AMCLossWithPairing(angular_margin=angular_margin, lambda_=lambda_)
 
-model_paper_amc = PaperModel(input_channels=input_channels)  # Reinitialize the model
-optimizer = torch.optim.Adam(model_paper_amc.parameters(), lr=args.lr)
-path = args.save_path + f'paper_model_with_amcpair_ang_{angular_margin}_lambda_{lambda_}'
-train_model(model_paper_amc, path=path, criterion=criterion_amc, optimizer=optimizer, dataloader=train_loader, dataloader_val=test_loader,
+if args.model_type == 'paper_model':
+    model_amc = PaperModel(input_channels=input_channels)  # Reinitialize the model
+else:
+    model_amc = SimpleCNN(input_channels=input_channels)
+optimizer = torch.optim.Adam(model_amc.parameters(), lr=args.lr)
+path = args.save_path + f'{args.model_type}_with_amcpair_ang_{angular_margin}_lambda_{lambda_}'
+train_model(model_amc, path=path, criterion=criterion_amc, optimizer=optimizer, dataloader=train_loader, dataloader_val=test_loader,
             num_epochs=args.num_epochs_amc, use_amc_loss=True)
 
 # Save the model weights
-path = args.save_path + f'paper_model_with_amcpair_ang_{angular_margin}_lambda_{lambda_}_{args.note}.pth'
-torch.save(model_paper_amc.state_dict(), path)
+path = args.save_path + f'{args.model_type}_with_amcpair_ang_{angular_margin}_lambda_{lambda_}_{args.note}.pth'
+torch.save(model_amc.state_dict(), path)
 print(f"Model weights saved at {path}")
 
 # Evaluate on Test Set
-evaluate_model(model_paper_amc, test_loader, device)
-infidelity_score = compute_infidelity(model_paper_amc, test_loader, device, noise_std=0.003, perturbations=50)
+evaluate_model(model_amc, test_loader, device)
